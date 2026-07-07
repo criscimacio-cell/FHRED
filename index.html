@@ -290,6 +290,75 @@
     color: var(--muted);
   }
   footer.statusbar b { color: var(--text); }
+
+  .modal-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.45);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-backdrop.show { display: flex; }
+  .modal {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    width: min(720px, 92vw);
+    max-height: 82vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 12px 40px rgba(0,0,0,.3);
+  }
+  .modal header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .modal header h3 { margin: 0; font-size: 13px; flex: 1; }
+  .modal header button {
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    background: var(--panel-bg);
+    color: var(--text);
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .modal header .close-x {
+    font-size: 16px;
+    line-height: 1;
+    padding: 4px 8px;
+  }
+  .modal-note {
+    font-size: 11px;
+    color: var(--muted);
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .history-list { overflow-y: auto; flex: 1; }
+  .history-row {
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .history-row .hist-top { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
+  .history-row .hist-files { margin-top: 3px; font-family: var(--mono); font-size: 11.5px; }
+  .history-row .hist-counts { margin-top: 3px; font-size: 11px; color: var(--muted); }
+  .history-row .hist-counts b { color: var(--text); }
+  .history-row button.copy-hist {
+    margin-top: 4px;
+    padding: 3px 8px;
+    font-size: 10.5px;
+    border: 1px solid var(--border);
+    background: var(--panel-bg);
+    color: var(--text);
+    border-radius: 4px;
+    cursor: pointer;
+  }
 </style>
 </head>
 <body>
@@ -322,6 +391,8 @@
     <button id="layoutToggleBtn" class="secondary" type="button" style="display:none">Toggle layout</button>
     <button id="copyDiffBtn" class="secondary" type="button" disabled>Copy diff list</button>
     <button id="exportCsvBtn" class="secondary" type="button" disabled>Export CSV</button>
+    <button id="exportXlsxBtn" class="secondary" type="button" disabled>Export XLSX</button>
+    <button id="historyBtn" class="secondary" type="button">History</button>
     <span class="toast" id="toast"></span>
   </div>
 
@@ -357,6 +428,18 @@
     <span id="statusSize">Size: -</span>
     <span id="statusDiffs" style="display:none">Diffs: 0</span>
   </footer>
+</div>
+
+<div class="modal-backdrop" id="historyModal">
+  <div class="modal">
+    <header>
+      <h3>Comparison history (<span id="historyCount">0</span>)</h3>
+      <button id="clearHistoryBtn" type="button">Clear history</button>
+      <button class="close-x" id="closeHistoryBtn" type="button">&times;</button>
+    </header>
+    <div class="modal-note">Stored locally in this browser only (localStorage). Only file names/sizes/diff counts are saved — no file bytes or diff content, so PHI/PII never persists here.</div>
+    <div class="history-list" id="historyList"></div>
+  </div>
 </div>
 
 <script type="application/x-worker" id="diffWorkerSrc">
@@ -819,6 +902,7 @@ function resetDiffUI() {
   document.getElementById("diffNotice").classList.remove("show");
   document.getElementById("copyDiffBtn").disabled = true;
   document.getElementById("exportCsvBtn").disabled = true;
+  document.getElementById("exportXlsxBtn").disabled = true;
   document.getElementById("statusDiffs").style.display = "none";
   view1.setDiffRanges([]);
   view2.setDiffRanges([]);
@@ -923,6 +1007,7 @@ function onDiffComplete() {
   document.getElementById("statusDiffs").innerHTML = "Diffs: <b>" + blocks.length + "</b>";
   document.getElementById("copyDiffBtn").disabled = blocks.length === 0;
   document.getElementById("exportCsvBtn").disabled = blocks.length === 0;
+  document.getElementById("exportXlsxBtn").disabled = blocks.length === 0;
 
   var notice = document.getElementById("diffNotice");
   if (state.file1.bom !== state.file2.bom) {
@@ -933,6 +1018,7 @@ function onDiffComplete() {
   }
 
   renderDiffList(blocks);
+  saveHistoryEntry(blocks);
 }
 
 var DIFF_LIST_CAP = 2000;
@@ -1013,6 +1099,20 @@ function showToast(msg) {
   setTimeout(function () { t.classList.remove("show"); }, 2200);
 }
 
+function buildDiffReportRows() {
+  var xmlAware = state.file1.isXml || state.file2.isXml;
+  var rows = [["#", "Type", "File1 Start", "File1 End", "File1 Length", "File2 Start", "File2 End", "File2 Length", "Preview1", "Preview2", "XML Context"]];
+  state.diffBlocks.forEach(function (b) {
+    var ctx = xmlAware ? (xmlContextNear(state.file1.buf, b.start1) || "") : "";
+    rows.push([
+      b.index, b.type, formatOffset(b.start1), formatOffset(b.end1), b.len1,
+      formatOffset(b.start2), formatOffset(b.end2), b.len2,
+      b.ascii1 + (b.truncated ? "..." : ""), b.ascii2 + (b.truncated ? "..." : ""), ctx
+    ]);
+  });
+  return rows;
+}
+
 document.getElementById("copyDiffBtn").addEventListener("click", function () {
   var lines = [
     "| # | Type | File1 Range | File2 Range | Len1 | Len2 | Preview1 | Preview2 |",
@@ -1033,26 +1133,265 @@ document.getElementById("copyDiffBtn").addEventListener("click", function () {
   });
 });
 
-document.getElementById("exportCsvBtn").addEventListener("click", function () {
-  var rows = [["#", "Type", "File1 Start", "File1 End", "File1 Length", "File2 Start", "File2 End", "File2 Length", "Preview1", "Preview2", "XML Context"]];
-  var xmlAware = state.file1.isXml || state.file2.isXml;
-  state.diffBlocks.forEach(function (b) {
-    var ctx = xmlAware ? (xmlContextNear(state.file1.buf, b.start1) || "") : "";
-    rows.push([
-      b.index, b.type, formatOffset(b.start1), formatOffset(b.end1), b.len1,
-      formatOffset(b.start2), formatOffset(b.end2), b.len2,
-      b.ascii1 + (b.truncated ? "..." : ""), b.ascii2 + (b.truncated ? "..." : ""), ctx
-    ]);
-  });
-  var csv = rows.map(function (r) { return r.map(escapeCsv).join(","); }).join("\r\n");
-  var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+function downloadBlob(blob, filename) {
   var a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "hex-diff-report.csv";
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}
+
+document.getElementById("exportCsvBtn").addEventListener("click", function () {
+  var rows = buildDiffReportRows();
+  var csv = rows.map(function (r) { return r.map(escapeCsv).join(","); }).join("\r\n");
+  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8;" }), "hex-diff-report.csv");
   showToast("Exported " + state.diffBlocks.length + " diff block(s) as CSV");
+});
+
+/* ---------------------------------------------------------------------- */
+/* Minimal embedded XLSX writer (hand-rolled ZIP + OOXML, no dependencies) */
+/* Uses "stored" (uncompressed) ZIP entries - valid per the ZIP spec and   */
+/* avoids needing a DEFLATE implementation just to produce a .xlsx file.  */
+/* ---------------------------------------------------------------------- */
+
+var CRC_TABLE = (function () {
+  var table = [];
+  for (var n = 0; n < 256; n++) {
+    var c = n;
+    for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  var crc = 0xFFFFFFFF;
+  for (var i = 0; i < bytes.length; i++) crc = CRC_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+function ZipWriter() { this.files = []; }
+ZipWriter.prototype.addFile = function (name, dataStrOrBytes) {
+  var bytes = (typeof dataStrOrBytes === "string") ? new TextEncoder().encode(dataStrOrBytes) : dataStrOrBytes;
+  this.files.push({ name: name, data: bytes });
+};
+ZipWriter.prototype.toBlob = function () {
+  var localChunks = [], centralChunks = [];
+  var offset = 0;
+  var now = new Date();
+  var dosTime = ((now.getHours() & 0x1F) << 11) | ((now.getMinutes() & 0x3F) << 5) | ((now.getSeconds() >> 1) & 0x1F);
+  var dosDate = (((now.getFullYear() - 1980) & 0x7F) << 9) | (((now.getMonth() + 1) & 0xF) << 5) | (now.getDate() & 0x1F);
+
+  this.files.forEach(function (f) {
+    var nameBytes = new TextEncoder().encode(f.name);
+    var crc = crc32(f.data);
+    var size = f.data.length;
+
+    var local = new Uint8Array(30 + nameBytes.length);
+    var dv = new DataView(local.buffer);
+    dv.setUint32(0, 0x04034b50, true);
+    dv.setUint16(4, 20, true);
+    dv.setUint16(6, 0, true);
+    dv.setUint16(8, 0, true);
+    dv.setUint16(10, dosTime, true);
+    dv.setUint16(12, dosDate, true);
+    dv.setUint32(14, crc, true);
+    dv.setUint32(18, size, true);
+    dv.setUint32(22, size, true);
+    dv.setUint16(26, nameBytes.length, true);
+    dv.setUint16(28, 0, true);
+    local.set(nameBytes, 30);
+    localChunks.push(local, f.data);
+
+    var central = new Uint8Array(46 + nameBytes.length);
+    var cdv = new DataView(central.buffer);
+    cdv.setUint32(0, 0x02014b50, true);
+    cdv.setUint16(4, 20, true);
+    cdv.setUint16(6, 20, true);
+    cdv.setUint16(8, 0, true);
+    cdv.setUint16(10, 0, true);
+    cdv.setUint16(12, dosTime, true);
+    cdv.setUint16(14, dosDate, true);
+    cdv.setUint32(16, crc, true);
+    cdv.setUint32(20, size, true);
+    cdv.setUint32(24, size, true);
+    cdv.setUint16(28, nameBytes.length, true);
+    cdv.setUint16(30, 0, true);
+    cdv.setUint16(32, 0, true);
+    cdv.setUint16(34, 0, true);
+    cdv.setUint16(36, 0, true);
+    cdv.setUint32(38, 0, true);
+    cdv.setUint32(42, offset, true);
+    central.set(nameBytes, 46);
+    centralChunks.push(central);
+
+    offset += local.length + f.data.length;
+  });
+
+  var centralSize = centralChunks.reduce(function (s, c) { return s + c.length; }, 0);
+  var centralOffset = offset;
+
+  var end = new Uint8Array(22);
+  var edv = new DataView(end.buffer);
+  edv.setUint32(0, 0x06054b50, true);
+  edv.setUint16(4, 0, true);
+  edv.setUint16(6, 0, true);
+  edv.setUint16(8, this.files.length, true);
+  edv.setUint16(10, this.files.length, true);
+  edv.setUint32(12, centralSize, true);
+  edv.setUint32(16, centralOffset, true);
+  edv.setUint16(20, 0, true);
+
+  return new Blob(localChunks.concat(centralChunks, [end]), { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+};
+
+function xlsxColumnLetter(nZeroBased) {
+  var n = nZeroBased + 1, s = "";
+  while (n > 0) {
+    var rem = (n - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+function escapeXml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
+function buildSheetXml(rows) {
+  var rowsXml = rows.map(function (row, rIdx) {
+    var r = rIdx + 1;
+    var cellsXml = row.map(function (val, cIdx) {
+      var ref = xlsxColumnLetter(cIdx) + r;
+      if (typeof val === "number" && isFinite(val)) return '<c r="' + ref + '" t="n"><v>' + val + "</v></c>";
+      return '<c r="' + ref + '" t="inlineStr"><is><t xml:space="preserve">' + escapeXml(val) + "</t></is></c>";
+    }).join("");
+    return '<row r="' + r + '">' + cellsXml + "</row>";
+  }).join("");
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' + rowsXml + "</sheetData></worksheet>";
+}
+
+function buildXlsxBlob(rows) {
+  var zip = new ZipWriter();
+  zip.addFile("[Content_Types].xml",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+    '<Default Extension="xml" ContentType="application/xml"/>' +
+    '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+    '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
+    "</Types>");
+  zip.addFile("_rels/.rels",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+    "</Relationships>");
+  zip.addFile("xl/workbook.xml",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    "<sheets><sheet name=\"Diff Report\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>");
+  zip.addFile("xl/_rels/workbook.xml.rels",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+    "</Relationships>");
+  zip.addFile("xl/worksheets/sheet1.xml", buildSheetXml(rows));
+  return zip.toBlob();
+}
+
+document.getElementById("exportXlsxBtn").addEventListener("click", function () {
+  var rows = buildDiffReportRows();
+  downloadBlob(buildXlsxBlob(rows), "hex-diff-report.xlsx");
+  showToast("Exported " + state.diffBlocks.length + " diff block(s) as XLSX");
+});
+
+/* ---------------------------------------------------------------------- */
+/* Comparison history (localStorage, metadata only - no file bytes/PII)   */
+/* ---------------------------------------------------------------------- */
+
+var HISTORY_KEY = "hexDiffTool.history.v1";
+var HISTORY_CAP = 100;
+
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); } catch (e) { return []; }
+}
+
+function saveHistoryEntry(blocks) {
+  var counts = { substitution: 0, shift: 0, tail: 0 };
+  blocks.forEach(function (b) { counts[b.type] = (counts[b.type] || 0) + 1; });
+  var entry = {
+    ts: Date.now(),
+    file1Name: state.file1.file.name, file1Size: state.file1.buf.length, file1Bom: state.file1.bom,
+    file2Name: state.file2.file.name, file2Size: state.file2.buf.length, file2Bom: state.file2.bom,
+    diffTotal: blocks.length,
+    counts: counts
+  };
+  var hist = loadHistory();
+  hist.unshift(entry);
+  if (hist.length > HISTORY_CAP) hist = hist.slice(0, HISTORY_CAP);
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(hist)); } catch (e) { /* storage full/unavailable - skip silently */ }
+  if (document.getElementById("historyModal").classList.contains("show")) renderHistoryList();
+}
+
+function historySummaryText(e) {
+  return (
+    "Comparison at " + new Date(e.ts).toLocaleString() + "\n" +
+    "File 1: " + e.file1Name + " (" + e.file1Size.toLocaleString() + " bytes, " + e.file1Bom + ")\n" +
+    "File 2: " + e.file2Name + " (" + e.file2Size.toLocaleString() + " bytes, " + e.file2Bom + ")\n" +
+    "Diffs: " + e.diffTotal + " total (" + (e.counts.substitution || 0) + " substitution, " +
+    (e.counts.shift || 0) + " shift, " + (e.counts.tail || 0) + " tail)"
+  );
+}
+
+function renderHistoryList() {
+  var hist = loadHistory();
+  document.getElementById("historyCount").textContent = hist.length;
+  var container = document.getElementById("historyList");
+  if (hist.length === 0) {
+    container.innerHTML = '<div class="diff-empty">No comparisons recorded yet. Run a Compare to add one.</div>';
+    return;
+  }
+  container.innerHTML = hist.map(function (e, idx) {
+    return (
+      '<div class="history-row" data-idx="' + idx + '">' +
+      '<div class="hist-top"><span>' + new Date(e.ts).toLocaleString() + "</span><span>" + e.diffTotal + " diff(s)</span></div>" +
+      '<div class="hist-files">' + escapeHtml(e.file1Name) + " (" + humanSize(e.file1Size) + ") &harr; " + escapeHtml(e.file2Name) + " (" + humanSize(e.file2Size) + ")</div>" +
+      '<div class="hist-counts"><b>' + (e.counts.substitution || 0) + '</b> substitution &middot; <b>' + (e.counts.shift || 0) + '</b> shift &middot; <b>' + (e.counts.tail || 0) + "</b> tail" +
+      (e.file1Bom !== e.file2Bom ? " &middot; encoding marker mismatch" : "") + "</div>" +
+      '<button class="copy-hist" type="button" data-idx="' + idx + '">Copy summary</button>' +
+      "</div>"
+    );
+  }).join("");
+  container.querySelectorAll(".copy-hist").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var e = hist[parseInt(btn.getAttribute("data-idx"), 10)];
+      navigator.clipboard.writeText(historySummaryText(e)).then(function () {
+        showToast("Copied comparison summary to clipboard");
+      }).catch(function () {
+        showToast("Clipboard copy failed — select and copy manually");
+      });
+    });
+  });
+}
+
+document.getElementById("historyBtn").addEventListener("click", function () {
+  renderHistoryList();
+  document.getElementById("historyModal").classList.add("show");
+});
+document.getElementById("closeHistoryBtn").addEventListener("click", function () {
+  document.getElementById("historyModal").classList.remove("show");
+});
+document.getElementById("historyModal").addEventListener("click", function (e) {
+  if (e.target.id === "historyModal") document.getElementById("historyModal").classList.remove("show");
+});
+document.getElementById("clearHistoryBtn").addEventListener("click", function () {
+  if (!confirm("Clear all locally saved comparison history? This cannot be undone.")) return;
+  localStorage.removeItem(HISTORY_KEY);
+  renderHistoryList();
 });
 </script>
 </body>
