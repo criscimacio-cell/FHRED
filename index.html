@@ -359,6 +359,58 @@
     border-radius: 4px;
     cursor: pointer;
   }
+
+  .link-btn {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 2px 0;
+    text-decoration: underline;
+  }
+  .paste-toggle { margin-top: 2px; }
+  .paste-area {
+    border: 1.5px solid var(--border);
+    border-radius: 6px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .paste-area textarea {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    width: 100%;
+    min-height: 80px;
+    resize: vertical;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 6px;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .paste-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .paste-controls select {
+    font-size: 11px;
+    padding: 4px 6px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+  }
+  .paste-controls button {
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    background: var(--accent);
+    color: #fff;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .paste-controls button.link-btn { background: none; color: var(--muted); border: none; text-decoration: none; }
+  .paste-warning { font-size: 10.5px; color: var(--diff-shift-text, #b45309); line-height: 1.4; }
+  .file-meta .pasted-note { color: var(--diff-shift-text, #b45309); }
 </style>
 </head>
 <body>
@@ -373,12 +425,42 @@
         <label>File 1</label>
         <div class="dropzone" id="drop1">Drop file here or click to browse</div>
         <input type="file" id="fileInput1" hidden>
+        <div class="paste-toggle"><button type="button" class="link-btn" id="pasteToggle1">Paste text instead</button></div>
+        <div class="paste-area" id="pasteArea1" style="display:none">
+          <textarea id="pasteText1" placeholder="Paste XML or text content here..."></textarea>
+          <div class="paste-controls">
+            <label>Encode as: <select id="pasteEncoding1">
+              <option value="utf8">UTF-8 (no BOM)</option>
+              <option value="utf8bom">UTF-8 with BOM</option>
+              <option value="utf16le">UTF-16LE with BOM</option>
+              <option value="utf16be">UTF-16BE with BOM</option>
+            </select></label>
+            <button type="button" id="pasteLoadBtn1">Load pasted text</button>
+            <button type="button" class="link-btn" id="pasteCancelBtn1">Cancel</button>
+          </div>
+          <div class="paste-warning">Pasted text is re-encoded from scratch — the original file's exact bytes, BOM, and line-ending style are not preserved. For byte-exact encoding investigations, load the actual file instead.</div>
+        </div>
         <div class="file-meta" id="meta1"></div>
       </div>
       <div class="file-slot" id="slot2" style="display:none">
         <label>File 2</label>
         <div class="dropzone" id="drop2">Drop file here or click to browse</div>
         <input type="file" id="fileInput2" hidden>
+        <div class="paste-toggle"><button type="button" class="link-btn" id="pasteToggle2">Paste text instead</button></div>
+        <div class="paste-area" id="pasteArea2" style="display:none">
+          <textarea id="pasteText2" placeholder="Paste XML or text content here..."></textarea>
+          <div class="paste-controls">
+            <label>Encode as: <select id="pasteEncoding2">
+              <option value="utf8">UTF-8 (no BOM)</option>
+              <option value="utf8bom">UTF-8 with BOM</option>
+              <option value="utf16le">UTF-16LE with BOM</option>
+              <option value="utf16be">UTF-16BE with BOM</option>
+            </select></label>
+            <button type="button" id="pasteLoadBtn2">Load pasted text</button>
+            <button type="button" class="link-btn" id="pasteCancelBtn2">Cancel</button>
+          </div>
+          <div class="paste-warning">Pasted text is re-encoded from scratch — the original file's exact bytes, BOM, and line-ending style are not preserved. For byte-exact encoding investigations, load the actual file instead.</div>
+        </div>
         <div class="file-meta" id="meta2"></div>
       </div>
     </div>
@@ -854,30 +936,33 @@ function updateStatusBar(paneNum, offset) {
 
 function loadFile(fileObj, slotNum) {
   return fileObj.arrayBuffer().then(function (ab) {
-    var buf = new Uint8Array(ab);
-    var model = {
-      file: fileObj,
-      buf: buf,
-      bom: detectBOM(buf),
-      isXml: looksLikeXml(buf)
-    };
-    if (slotNum === 1) {
-      state.file1 = model;
-      view1.setBuffer(buf);
-      view1.setDiffRanges([]);
-      document.getElementById("paneTitle1").textContent = "File 1: " + fileObj.name;
-    } else {
-      state.file2 = model;
-      view2.setBuffer(buf);
-      view2.setDiffRanges([]);
-      document.getElementById("paneTitle2").textContent = "File 2: " + fileObj.name;
-    }
-    renderFileMeta(slotNum);
-    resetDiffUI();
-    updateCompareButtonState();
+    applyLoadedBuffer(new Uint8Array(ab), { name: fileObj.name, lastModified: fileObj.lastModified, source: "file" }, slotNum);
   }).catch(function (err) {
     showToast("Failed to read file: " + err.message);
   });
+}
+
+function applyLoadedBuffer(buf, meta, slotNum) {
+  var model = {
+    file: meta,
+    buf: buf,
+    bom: detectBOM(buf),
+    isXml: looksLikeXml(buf)
+  };
+  if (slotNum === 1) {
+    state.file1 = model;
+    view1.setBuffer(buf);
+    view1.setDiffRanges([]);
+    document.getElementById("paneTitle1").textContent = "File 1: " + meta.name;
+  } else {
+    state.file2 = model;
+    view2.setBuffer(buf);
+    view2.setDiffRanges([]);
+    document.getElementById("paneTitle2").textContent = "File 2: " + meta.name;
+  }
+  renderFileMeta(slotNum);
+  resetDiffUI();
+  updateCompareButtonState();
 }
 
 function renderFileMeta(slotNum) {
@@ -888,11 +973,68 @@ function renderFileMeta(slotNum) {
   dz.classList.add("loaded");
   dz.textContent = model.file.name;
   var bomWarn = model.bom !== "none" ? '<span class="warn">' + model.bom + "</span>" : "none";
+  var pastedNote = model.file.source === "paste" ? '<br><span class="pasted-note">Pasted &amp; re-encoded — not a byte-exact copy of any original file.</span>' : "";
   el.innerHTML =
     "Size: <b>" + model.buf.length.toLocaleString() + " bytes</b> (" + humanSize(model.buf.length) + ")<br>" +
     "Modified: <b>" + new Date(model.file.lastModified).toLocaleString() + "</b><br>" +
-    "Encoding marker: " + bomWarn + (model.isXml ? " &middot; looks like XML" : "");
+    "Encoding marker: " + bomWarn + (model.isXml ? " &middot; looks like XML" : "") + pastedNote;
 }
+
+/* ---------------------------------------------------------------------- */
+/* Paste-text loading (re-encodes pasted text to bytes; see warning in UI)*/
+/* ---------------------------------------------------------------------- */
+
+function utf16Bytes(str, littleEndian) {
+  var buf = new Uint8Array(2 + str.length * 2);
+  var dv = new DataView(buf.buffer);
+  dv.setUint16(0, 0xFEFF, littleEndian);
+  for (var i = 0; i < str.length; i++) dv.setUint16(2 + i * 2, str.charCodeAt(i), littleEndian);
+  return buf;
+}
+
+function encodePastedText(str, encoding) {
+  if (encoding === "utf8bom") {
+    var body = new TextEncoder().encode(str);
+    var out = new Uint8Array(3 + body.length);
+    out.set([0xEF, 0xBB, 0xBF], 0);
+    out.set(body, 3);
+    return out;
+  }
+  if (encoding === "utf16le") return utf16Bytes(str, true);
+  if (encoding === "utf16be") return utf16Bytes(str, false);
+  return new TextEncoder().encode(str);
+}
+
+function wirePasteArea(slotNum) {
+  var toggle = document.getElementById("pasteToggle" + slotNum);
+  var area = document.getElementById("pasteArea" + slotNum);
+  var dz = document.getElementById("drop" + slotNum);
+  var textarea = document.getElementById("pasteText" + slotNum);
+  var encodingSel = document.getElementById("pasteEncoding" + slotNum);
+  var loadBtn = document.getElementById("pasteLoadBtn" + slotNum);
+  var cancelBtn = document.getElementById("pasteCancelBtn" + slotNum);
+
+  toggle.addEventListener("click", function () {
+    dz.style.display = "none";
+    area.style.display = "flex";
+    textarea.focus();
+  });
+  cancelBtn.addEventListener("click", function () {
+    area.style.display = "none";
+    dz.style.display = "block";
+  });
+  loadBtn.addEventListener("click", function () {
+    var text = textarea.value;
+    if (text === "") { showToast("Paste some text first"); return; }
+    var encoding = encodingSel.value;
+    var buf = encodePastedText(text, encoding);
+    applyLoadedBuffer(buf, { name: "Pasted text (" + encodingSel.options[encodingSel.selectedIndex].text + ")", lastModified: Date.now(), source: "paste" }, slotNum);
+    area.style.display = "none";
+    dz.style.display = "block";
+  });
+}
+wirePasteArea(1);
+wirePasteArea(2);
 
 function resetDiffUI() {
   state.diffBlocks = [];
