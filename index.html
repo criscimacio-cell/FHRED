@@ -475,6 +475,7 @@
     <button id="exportCsvBtn" class="secondary" type="button" disabled>Export CSV</button>
     <button id="exportXlsxBtn" class="secondary" type="button" disabled>Export XLSX</button>
     <button id="historyBtn" class="secondary" type="button">History</button>
+    <button id="resetBtn" class="secondary" type="button">Clear all</button>
     <span class="toast" id="toast"></span>
   </div>
 
@@ -969,7 +970,7 @@ function renderFileMeta(slotNum) {
   var model = slotNum === 1 ? state.file1 : state.file2;
   var el = document.getElementById("meta" + slotNum);
   var dz = document.getElementById("drop" + slotNum);
-  if (!model) { el.innerHTML = ""; dz.classList.remove("loaded"); return; }
+  if (!model) { el.innerHTML = ""; dz.classList.remove("loaded"); dz.textContent = "Drop file here or click to browse"; return; }
   dz.classList.add("loaded");
   dz.textContent = model.file.name;
   var bomWarn = model.bom !== "none" ? '<span class="warn">' + model.bom + "</span>" : "none";
@@ -1534,6 +1535,35 @@ document.getElementById("clearHistoryBtn").addEventListener("click", function ()
   if (!confirm("Clear all locally saved comparison history? This cannot be undone.")) return;
   localStorage.removeItem(HISTORY_KEY);
   renderHistoryList();
+});
+
+/* ---------------------------------------------------------------------- */
+/* Reset: clear loaded files, diff results, and inputs to start fresh     */
+/* ---------------------------------------------------------------------- */
+
+document.getElementById("resetBtn").addEventListener("click", function () {
+  state.file1 = null;
+  state.file2 = null;
+  view1.setBuffer(new Uint8Array(0));
+  view2.setBuffer(new Uint8Array(0));
+  document.getElementById("paneTitle1").textContent = "File 1";
+  document.getElementById("paneTitle2").textContent = "File 2";
+  document.getElementById("fileInput1").value = "";
+  document.getElementById("fileInput2").value = "";
+  document.getElementById("pasteText1").value = "";
+  document.getElementById("pasteText2").value = "";
+  document.getElementById("pasteArea1").style.display = "none";
+  document.getElementById("pasteArea2").style.display = "none";
+  document.getElementById("drop1").style.display = "block";
+  document.getElementById("drop2").style.display = "block";
+  document.getElementById("gotoInput").value = "";
+  document.getElementById("statusOffset").textContent = "Offset: -";
+  document.getElementById("statusByte").textContent = "Byte: -";
+  renderFileMeta(1);
+  renderFileMeta(2);
+  resetDiffUI();
+  updateCompareButtonState();
+  showToast("Cleared all loaded files and results");
 });
 </script>
 </body>
