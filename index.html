@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hex Viewer &amp; Byte Diff Tool</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --panel-bg: #ffffff;
+    --border: #d7dbe0;
+    --text: #1c2126;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --accent-weak: #dbeafe;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --row-alt: #fafbfc;
+    --diff-sub: #fde68a;
+    --diff-sub-text: #78350f;
+    --diff-shift: #fdba74;
+    --diff-shift-text: #7c2d12;
+    --diff-tail: #fca5a5;
+    --diff-tail-text: #7f1d1d;
+    --active-outline: #2563eb;
+    --select-outline: #059669;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c;
+      --panel-bg: #1b1f26;
+      --border: #2c313a;
+      --text: #e5e7eb;
+      --muted: #9aa4b2;
+      --accent: #60a5fa;
+      --accent-weak: #1e3a5f;
+      --row-alt: #20242c;
+      --diff-sub: #7a5b12;
+      --diff-sub-text: #fde68a;
+      --diff-shift: #8a4a1e;
+      --diff-shift-text: #fdba74;
+      --diff-tail: #7f2020;
+      --diff-tail-text: #fca5a5;
+      --active-outline: #60a5fa;
+      --select-outline: #34d399;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+  }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  header.topbar {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 10px 14px;
+    background: var(--panel-bg);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .mode-toggle { display: flex; gap: 4px; }
+  .mode-btn {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    background: var(--panel-bg);
+    color: var(--text);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .mode-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  .file-slots { display: flex; gap: 12px; flex: 1; flex-wrap: wrap; }
+  .file-slot { display: flex; flex-direction: column; gap: 4px; min-width: 240px; flex: 1; }
+  .file-slot label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .dropzone {
+    border: 1.5px dashed var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    text-align: center;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 12px;
+    transition: border-color .15s, background .15s;
+  }
+  .dropzone.dragover { border-color: var(--accent); background: var(--accent-weak); color: var(--text); }
+  .dropzone.loaded { border-style: solid; border-color: var(--accent); color: var(--text); }
+  .file-meta { font-size: 11px; color: var(--muted); line-height: 1.5; }
+  .file-meta b { color: var(--text); }
+  .file-meta .warn { color: var(--diff-shift-text, #b45309); font-weight: 600; }
+
+  #compareBtn, .toolbar button {
+    padding: 7px 14px;
+    border: 1px solid var(--border);
+    background: var(--accent);
+    color: #fff;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  #compareBtn:disabled, .toolbar button:disabled {
+    background: var(--panel-bg);
+    color: var(--muted);
+    cursor: not-allowed;
+    border-color: var(--border);
+  }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px;
+    background: var(--panel-bg);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .toolbar label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .toolbar input {
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 5px 8px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    width: 120px;
+  }
+  .toolbar button.secondary { background: var(--panel-bg); color: var(--text); }
+  .toast {
+    font-size: 12px;
+    color: var(--accent);
+    opacity: 0;
+    transition: opacity .2s;
+  }
+  .toast.show { opacity: 1; }
+
+  .main-area { flex: 1; display: flex; min-height: 0; }
+  .hexpanes { flex: 1; display: flex; gap: 8px; padding: 8px; min-width: 0; }
+  .hexpanes.stacked { flex-direction: column; }
+  .hexpane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .hexpane h3 {
+    margin: 0;
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .colheader {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    padding: 4px 10px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    white-space: pre;
+  }
+  .colheader .offset-col { width: 78px; flex-shrink:0; }
+  .colheader .hex-col { flex-shrink:0; }
+
+  .hexscroll {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: auto;
+    position: relative;
+    font-family: var(--mono);
+  }
+  .hexspacer { position: relative; width: 1px; }
+  .hexrows { position: absolute; top: 0; left: 0; right: 0; will-change: transform; }
+  .row {
+    display: flex;
+    align-items: center;
+    height: 20px;
+    line-height: 20px;
+    white-space: nowrap;
+    padding: 0 10px;
+  }
+  .row:nth-child(odd) { background: var(--row-alt); }
+  .offset {
+    width: 68px;
+    flex-shrink: 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .hexbytes, .asciibytes { display: flex; }
+  .hexbytes { margin-right: 14px; }
+  .byte {
+    display: inline-block;
+    width: 18px;
+    text-align: center;
+    font-size: 12px;
+    border-radius: 2px;
+    cursor: pointer;
+  }
+  .asciibytes .byte { width: 9px; }
+  .byte.pad { cursor: default; }
+  .gap { display: inline-block; width: 6px; }
+  .byte:hover { background: var(--accent-weak); }
+  .byte.diff-substitution { background: var(--diff-sub); color: var(--diff-sub-text); }
+  .byte.diff-shift { background: var(--diff-shift); color: var(--diff-shift-text); }
+  .byte.diff-tail { background: var(--diff-tail); color: var(--diff-tail-text); }
+  .byte.diff-active { outline: 2px solid var(--active-outline); outline-offset: -1px; }
+  .byte.selected { outline: 2px solid var(--select-outline); outline-offset: -1px; }
+  .byte.flash { animation: flash-anim 1.2s ease-out; }
+  @keyframes flash-anim {
+    0% { outline: 2px solid var(--active-outline); background: var(--accent-weak); }
+    100% { outline: 2px solid var(--active-outline); }
+  }
+
+  .diffpanel {
+    width: 380px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin: 8px 8px 8px 0;
+    min-height: 0;
+  }
+  .diffpanel h3 {
+    margin: 0;
+    padding: 8px 10px;
+    font-size: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .diffnotice {
+    font-size: 11px;
+    color: var(--diff-shift-text, #b45309);
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    display: none;
+  }
+  .diffnotice.show { display: block; }
+  .difflist { flex: 1; overflow-y: auto; font-family: var(--mono); font-size: 11px; }
+  .diff-row {
+    display: grid;
+    grid-template-columns: 26px 1fr 1fr 40px;
+    gap: 4px;
+    padding: 5px 8px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    align-items: center;
+  }
+  .diff-row:hover { background: var(--accent-weak); }
+  .diff-row.active { background: var(--accent-weak); box-shadow: inset 3px 0 0 var(--accent); }
+  .diff-row .badge {
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    justify-self: start;
+  }
+  .diff-row .badge.substitution { background: var(--diff-sub); color: var(--diff-sub-text); }
+  .diff-row .badge.shift { background: var(--diff-shift); color: var(--diff-shift-text); }
+  .diff-row .badge.tail { background: var(--diff-tail); color: var(--diff-tail-text); }
+  .diff-row .ctx { grid-column: 1 / -1; color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .diff-empty { padding: 16px; color: var(--muted); text-align: center; font-size: 12px; font-family: -apple-system, sans-serif; }
+
+  footer.statusbar {
+    display: flex;
+    gap: 20px;
+    padding: 6px 14px;
+    background: var(--panel-bg);
+    border-top: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+  }
+  footer.statusbar b { color: var(--text); }
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="mode-toggle">
+      <button id="modeSingleBtn" class="mode-btn active" type="button">Single File</button>
+      <button id="modeCompareBtn" class="mode-btn" type="button">Compare</button>
+    </div>
+    <div class="file-slots">
+      <div class="file-slot">
+        <label>File 1</label>
+        <div class="dropzone" id="drop1">Drop file here or click to browse</div>
+        <input type="file" id="fileInput1" hidden>
+        <div class="file-meta" id="meta1"></div>
+      </div>
+      <div class="file-slot" id="slot2" style="display:none">
+        <label>File 2</label>
+        <div class="dropzone" id="drop2">Drop file here or click to browse</div>
+        <input type="file" id="fileInput2" hidden>
+        <div class="file-meta" id="meta2"></div>
+      </div>
+    </div>
+    <button id="compareBtn" type="button" style="display:none" disabled>Compare</button>
+  </header>
+
+  <div class="toolbar">
+    <label>Go to offset: <input id="gotoInput" placeholder="0x0 or 0"></label>
+    <button id="gotoBtn" class="secondary" type="button">Go</button>
+    <button id="layoutToggleBtn" class="secondary" type="button" style="display:none">Toggle layout</button>
+    <button id="copyDiffBtn" class="secondary" type="button" disabled>Copy diff list</button>
+    <button id="exportCsvBtn" class="secondary" type="button" disabled>Export CSV</button>
+    <span class="toast" id="toast"></span>
+  </div>
+
+  <main class="main-area">
+    <div class="hexpanes" id="hexPanes">
+      <section class="hexpane" id="pane1">
+        <h3 id="paneTitle1">File 1</h3>
+        <div class="colheader"><span class="offset-col">Offset</span><span class="hex-col" id="colHeaderHex"></span></div>
+        <div class="hexscroll" id="scroll1">
+          <div class="hexspacer" id="spacer1"></div>
+          <div class="hexrows" id="rows1"></div>
+        </div>
+      </section>
+      <section class="hexpane" id="pane2" style="display:none">
+        <h3 id="paneTitle2">File 2</h3>
+        <div class="colheader"><span class="offset-col">Offset</span><span class="hex-col" id="colHeaderHex2"></span></div>
+        <div class="hexscroll" id="scroll2">
+          <div class="hexspacer" id="spacer2"></div>
+          <div class="hexrows" id="rows2"></div>
+        </div>
+      </section>
+    </div>
+    <aside class="diffpanel" id="diffPanel" style="display:none">
+      <h3>Diff blocks (<span id="diffCount">0</span>)</h3>
+      <div class="diffnotice" id="diffNotice"></div>
+      <div class="difflist" id="diffList"><div class="diff-empty">Load two files and click Compare.</div></div>
+    </aside>
+  </main>
+
+  <footer class="statusbar" id="statusbar">
+    <span id="statusOffset">Offset: -</span>
+    <span id="statusByte">Byte: -</span>
+    <span id="statusSize">Size: -</span>
+    <span id="statusDiffs" style="display:none">Diffs: 0</span>
+  </footer>
+</div>
+
+<script type="application/x-worker" id="diffWorkerSrc">
+"use strict";
+var RESYNC_WINDOW = 48;
+var RESYNC_CONFIRM = 8;
+
+function matchRun(buf1, buf2, a1, a2, len) {
+  if (a1 + len > buf1.length || a2 + len > buf2.length) return false;
+  for (var k = 0; k < len; k++) {
+    if (buf1[a1 + k] !== buf2[a2 + k]) return false;
+  }
+  return true;
+}
+
+function diffBuffers(buf1, buf2) {
+  var n1 = buf1.length, n2 = buf2.length;
+  var i1 = 0, i2 = 0;
+  var blocks = [];
+  var lastProgress = 0;
+
+  while (i1 < n1 && i2 < n2) {
+    if (buf1[i1] === buf2[i2]) { i1++; i2++; continue; }
+    var start1 = i1, start2 = i2;
+    var found = null;
+
+    // Phase A: same-length resync (pure substitution) - cheap, checked first.
+    for (var d = 0; d <= RESYNC_WINDOW; d++) {
+      if (matchRun(buf1, buf2, i1 + d, i2 + d, RESYNC_CONFIRM)) { found = { d1: d, d2: d }; break; }
+    }
+
+    // Phase B: asymmetric resync (insertion/deletion shift) - only if phase A failed.
+    if (!found) {
+      outer:
+      for (var total = 1; total <= RESYNC_WINDOW * 2; total++) {
+        var lo = Math.max(0, total - RESYNC_WINDOW);
+        var hi = Math.min(total, RESYNC_WINDOW);
+        for (var d1 = lo; d1 <= hi; d1++) {
+          var d2 = total - d1;
+          if (d1 === d2) continue;
+          if (matchRun(buf1, buf2, i1 + d1, i2 + d2, RESYNC_CONFIRM)) { found = { d1: d1, d2: d2 }; break outer; }
+        }
+      }
+    }
+
+    if (found) {
+      var end1 = i1 + found.d1, end2 = i2 + found.d2;
+      var type = (found.d1 === found.d2) ? "substitution" : "shift";
+      blocks.push({ type: type, start1: start1, end1: end1, start2: start2, end2: end2 });
+      i1 = end1; i2 = end2;
+    } else {
+      blocks.push({ type: "substitution", start1: start1, end1: n1, start2: start2, end2: n2 });
+      i1 = n1; i2 = n2;
+    }
+
+    if (i1 - lastProgress > 200000) {
+      lastProgress = i1;
+      self.postMessage({ kind: "progress", processed: i1, total: n1 });
+    }
+  }
+
+  if (i1 < n1 || i2 < n2) {
+    blocks.push({ type: "tail", start1: i1, end1: n1, start2: i2, end2: n2 });
+  }
+
+  for (var idx = 0; idx < blocks.length; idx++) blocks[idx].index = idx + 1;
+  return blocks;
+}
+
+function bytesToHexPreview(buf, start, end, cap) {
+  var lim = Math.min(end, start + cap);
+  var out = [];
+  for (var i = start; i < lim; i++) out.push(buf[i].toString(16).padStart(2, "0"));
+  return { hex: out.join(" "), truncated: end > lim };
+}
+
+function bytesToAsciiPreview(buf, start, end, cap) {
+  var lim = Math.min(end, start + cap);
+  var out = "";
+  for (var i = start; i < lim; i++) {
+    var b = buf[i];
+    out += (b >= 32 && b <= 126) ? String.fromCharCode(b) : ".";
+  }
+  return out;
+}
+
+self.onmessage = function (e) {
+  var msg = e.data;
+  if (msg.kind !== "diff") return;
+  var buf1 = new Uint8Array(msg.buf1);
+  var buf2 = new Uint8Array(msg.buf2);
+  var t0 = Date.now();
+  var blocks = diffBuffers(buf1, buf2);
+  var PREVIEW_CAP = 48;
+  var result = blocks.map(function (b) {
+    return {
+      index: b.index,
+      type: b.type,
+      start1: b.start1, end1: b.end1,
+      start2: b.start2, end2: b.end2,
+      len1: b.end1 - b.start1,
+      len2: b.end2 - b.start2,
+      hex1: bytesToHexPreview(buf1, b.start1, b.end1, PREVIEW_CAP).hex,
+      hex2: bytesToHexPreview(buf2, b.start2, b.end2, PREVIEW_CAP).hex,
+      ascii1: bytesToAsciiPreview(buf1, b.start1, b.end1, PREVIEW_CAP),
+      ascii2: bytesToAsciiPreview(buf2, b.start2, b.end2, PREVIEW_CAP),
+      truncated: (b.end1 - b.start1) > PREVIEW_CAP || (b.end2 - b.start2) > PREVIEW_CAP
+    };
+  });
+  self.postMessage({ kind: "done", blocks: result, elapsedMs: Date.now() - t0 });
+};
+</script>
+
+<script>
+"use strict";
+
+/* ---------------------------------------------------------------------- */
+/* Utilities                                                              */
+/* ---------------------------------------------------------------------- */
+
+function formatOffset(n) {
+  return "0x" + n.toString(16).toUpperCase().padStart(8, "0");
+}
+
+function humanSize(n) {
+  if (n < 1024) return n + " B";
+  var units = ["KB", "MB", "GB"];
+  var v = n;
+  for (var i = 0; i < units.length; i++) {
+    v /= 1024;
+    if (v < 1024 || i === units.length - 1) return v.toFixed(2) + " " + units[i];
+  }
+  return v.toFixed(2) + " GB";
+}
+
+function parseOffsetInput(str) {
+  str = str.trim();
+  if (str === "") return null;
+  var m = /^0x([0-9a-fA-F]+)$/.exec(str);
+  if (m) return parseInt(m[1], 16);
+  if (/^[0-9a-fA-F]+$/.test(str) && /[a-fA-F]/.test(str)) return parseInt(str, 16);
+  if (/^\d+$/.test(str)) return parseInt(str, 10);
+  return null;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function escapeCsv(s) {
+  s = String(s);
+  if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+function detectBOM(buf) {
+  if (buf.length >= 3 && buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) return "UTF-8 BOM";
+  if (buf.length >= 2 && buf[0] === 0xFF && buf[1] === 0xFE) return "UTF-16LE BOM";
+  if (buf.length >= 2 && buf[0] === 0xFE && buf[1] === 0xFF) return "UTF-16BE BOM";
+  return "none";
+}
+
+function looksLikeXml(buf) {
+  var probeLen = Math.min(buf.length, 512);
+  var text = "";
+  for (var i = 0; i < probeLen; i++) {
+    var b = buf[i];
+    if (b === 0xEF || b === 0xBB || b === 0xBF) continue;
+    text += String.fromCharCode(b);
+  }
+  return /^\s*<\?xml/i.test(text) || /^\s*</.test(text);
+}
+
+// Find the nearest preceding XML opening tag name before `offset`, for diff context.
+function xmlContextNear(buf, offset) {
+  var windowSize = 2000;
+  var start = Math.max(0, offset - windowSize);
+  var slice = buf.subarray(start, Math.min(offset, buf.length));
+  var text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: false }).decode(slice);
+  } catch (e) {
+    return null;
+  }
+  var re = /<([A-Za-z_][\w:.\-]*)(?:\s[^<>]*)?>/g;
+  var last = null, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m[1].charAt(0) !== "/") last = m[1];
+  }
+  return last;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Range index for O(log n) diff-highlight lookup while rendering rows    */
+/* ---------------------------------------------------------------------- */
+
+function RangeIndex(ranges) {
+  this.ranges = ranges || [];
+}
+RangeIndex.prototype.query = function (start, end) {
+  var ranges = this.ranges;
+  var lo = 0, hi = ranges.length;
+  while (lo < hi) {
+    var mid = (lo + hi) >> 1;
+    if (ranges[mid].end <= start) lo = mid + 1; else hi = mid;
+  }
+  var res = [];
+  for (var k = lo; k < ranges.length && ranges[k].start < end; k++) res.push(ranges[k]);
+  return res;
+};
+
+/* ---------------------------------------------------------------------- */
+/* HexView: virtualized hex + ascii pane                                  */
+/* ---------------------------------------------------------------------- */
+
+var ROW_HEIGHT = 20;
+var BYTES_PER_ROW = 16;
+var OVERSCAN = 8;
+var MAX_SPACER_PX = 10000000; // stay well under browser element-height limits
+
+function HexView(scrollEl, spacerEl, rowsEl, label) {
+  this.scrollEl = scrollEl;
+  this.spacerEl = spacerEl;
+  this.rowsEl = rowsEl;
+  this.label = label;
+  this.buf = new Uint8Array(0);
+  this.totalRows = 0;
+  this.effRowHeight = ROW_HEIGHT;
+  this.rangeIndex = new RangeIndex([]);
+  this.activeDiffIndex = -1;
+  this.selectedOffset = -1;
+  this.onByteSelected = null;
+  this.rafPending = false;
+
+  var self = this;
+  scrollEl.addEventListener("scroll", function () {
+    if (self.rafPending) return;
+    self.rafPending = true;
+    requestAnimationFrame(function () { self.rafPending = false; self.render(); if (self.onScroll) self.onScroll(); });
+  });
+  rowsEl.addEventListener("click", function (e) {
+    var target = e.target.closest(".byte");
+    if (!target || target.classList.contains("pad")) return;
+    var off = parseInt(target.getAttribute("data-off"), 10);
+    self.selectByte(off);
+    if (self.onByteSelected) self.onByteSelected(off);
+  });
+}
+
+HexView.prototype.setBuffer = function (buf) {
+  this.buf = buf;
+  this.totalRows = Math.max(1, Math.ceil(buf.length / BYTES_PER_ROW));
+  this._recomputeLayout();
+  this.selectedOffset = -1;
+  this.render();
+};
+
+HexView.prototype._recomputeLayout = function () {
+  var natural = this.totalRows * ROW_HEIGHT;
+  if (natural <= MAX_SPACER_PX) {
+    this.spacerHeight = natural;
+  } else {
+    this.spacerHeight = MAX_SPACER_PX;
+  }
+  this.effRowHeight = this.spacerHeight / this.totalRows;
+  this.spacerEl.style.height = this.spacerHeight + "px";
+};
+
+HexView.prototype.setDiffRanges = function (ranges) {
+  this.rangeIndex = new RangeIndex(ranges);
+  this.render();
+};
+
+HexView.prototype.setActiveDiff = function (index) {
+  this.activeDiffIndex = index;
+  this.render();
+};
+
+HexView.prototype.scrollToOffset = function (offset, flash) {
+  var rowIndex = Math.floor(offset / BYTES_PER_ROW);
+  var target = Math.max(0, rowIndex * this.effRowHeight - (this.scrollEl.clientHeight / 2));
+  this.scrollEl.scrollTop = target;
+  this.render();
+  if (flash !== false) {
+    var self = this;
+    requestAnimationFrame(function () {
+      var el = self.rowsEl.querySelector('.byte[data-off="' + offset + '"]');
+      if (el) {
+        el.classList.add("flash");
+        setTimeout(function () { el.classList.remove("flash"); }, 1200);
+      }
+    });
+  }
+};
+
+HexView.prototype.selectByte = function (offset) {
+  this.selectedOffset = offset;
+  this.render();
+};
+
+HexView.prototype._rowHtml = function (rowIndex) {
+  var buf = this.buf;
+  var start = rowIndex * BYTES_PER_ROW;
+  var end = Math.min(start + BYTES_PER_ROW, buf.length);
+  var overlaps = this.rangeIndex.query(start, start + BYTES_PER_ROW);
+  var hexHtml = "", asciiHtml = "";
+  for (var k = 0; k < BYTES_PER_ROW; k++) {
+    var off = start + k;
+    if (off >= end) {
+      hexHtml += '<span class="byte pad"> </span>';
+      asciiHtml += '<span class="byte pad"> </span>';
+    } else {
+      var b = buf[off];
+      var cls = "byte";
+      for (var r = 0; r < overlaps.length; r++) {
+        var range = overlaps[r];
+        if (off >= range.start && off < range.end) {
+          cls += " diff-" + range.type;
+          if (range.index === this.activeDiffIndex) cls += " diff-active";
+          break;
+        }
+      }
+      if (off === this.selectedOffset) cls += " selected";
+      var hex = b.toString(16).padStart(2, "0");
+      var ch = (b >= 32 && b <= 126) ? escapeHtml(String.fromCharCode(b)) : ".";
+      hexHtml += '<span class="' + cls + '" data-off="' + off + '">' + hex + "</span>";
+      asciiHtml += '<span class="' + cls + '" data-off="' + off + '">' + ch + "</span>";
+    }
+    if (k % 4 === 3 && k !== BYTES_PER_ROW - 1) hexHtml += '<span class="gap"></span>';
+  }
+  return '<div class="row" data-row="' + rowIndex + '"><span class="offset">' + formatOffset(start) +
+    '</span><span class="hexbytes">' + hexHtml + '</span><span class="asciibytes">' + asciiHtml + "</span></div>";
+};
+
+HexView.prototype.render = function () {
+  if (this.totalRows === 0) return;
+  var scrollTop = this.scrollEl.scrollTop;
+  var frac = this.spacerHeight > 0 ? scrollTop / this.spacerHeight : 0;
+  var visibleCount = Math.ceil(this.scrollEl.clientHeight / ROW_HEIGHT) + OVERSCAN * 2;
+  var firstRow = Math.max(0, Math.floor(frac * this.totalRows) - OVERSCAN);
+  var lastRow = Math.min(this.totalRows, firstRow + visibleCount);
+  var html = "";
+  for (var r = firstRow; r < lastRow; r++) html += this._rowHtml(r);
+  this.rowsEl.innerHTML = html;
+  this.rowsEl.style.transform = "translateY(" + (firstRow * this.effRowHeight) + "px)";
+};
+
+/* ---------------------------------------------------------------------- */
+/* App state                                                              */
+/* ---------------------------------------------------------------------- */
+
+var state = {
+  mode: "single", // "single" | "compare"
+  file1: null, // {file, buf, bom, isXml}
+  file2: null,
+  diffBlocks: [],
+  activeDiffIndex: -1,
+  syncingScroll: false
+};
+
+var view1 = new HexView(
+  document.getElementById("scroll1"),
+  document.getElementById("spacer1"),
+  document.getElementById("rows1"),
+  1
+);
+var view2 = new HexView(
+  document.getElementById("scroll2"),
+  document.getElementById("spacer2"),
+  document.getElementById("rows2"),
+  2
+);
+
+var colHeaderHtml = (function () {
+  var s = "";
+  for (var i = 0; i < BYTES_PER_ROW; i++) {
+    s += i.toString(16).toUpperCase().padStart(2, "0") + " ";
+    if (i % 4 === 3 && i !== BYTES_PER_ROW - 1) s += " ";
+  }
+  return s;
+})();
+document.getElementById("colHeaderHex").textContent = colHeaderHtml;
+document.getElementById("colHeaderHex2").textContent = colHeaderHtml;
+
+view1.onByteSelected = function (off) { updateStatusBar(1, off); };
+view2.onByteSelected = function (off) { updateStatusBar(2, off); };
+
+view1.onScroll = function () { syncScroll(view1, view2); };
+view2.onScroll = function () { syncScroll(view2, view1); };
+
+function syncScroll(from, to) {
+  if (state.mode !== "compare" || !state.file2 || state.syncingScroll) return;
+  state.syncingScroll = true;
+  var rowIndex = from.scrollEl.scrollTop / from.effRowHeight;
+  to.scrollEl.scrollTop = rowIndex * to.effRowHeight;
+  to.render();
+  state.syncingScroll = false;
+}
+
+function updateStatusBar(paneNum, offset) {
+  var fm = paneNum === 1 ? state.file1 : state.file2;
+  if (!fm) return;
+  var b = fm.buf[offset];
+  document.getElementById("statusOffset").innerHTML = "Offset: <b>" + formatOffset(offset) + "</b> (" + offset + ")" + (state.mode === "compare" ? " [File " + paneNum + "]" : "");
+  document.getElementById("statusByte").innerHTML = (b === undefined) ? "Byte: -" :
+    "Byte: <b>0x" + b.toString(16).padStart(2, "0") + "</b> (" + b + ", 0b" + b.toString(2).padStart(8, "0") + ") '" + ((b >= 32 && b <= 126) ? String.fromCharCode(b) : ".") + "'";
+}
+
+/* ---------------------------------------------------------------------- */
+/* File loading                                                           */
+/* ---------------------------------------------------------------------- */
+
+function loadFile(fileObj, slotNum) {
+  return fileObj.arrayBuffer().then(function (ab) {
+    var buf = new Uint8Array(ab);
+    var model = {
+      file: fileObj,
+      buf: buf,
+      bom: detectBOM(buf),
+      isXml: looksLikeXml(buf)
+    };
+    if (slotNum === 1) {
+      state.file1 = model;
+      view1.setBuffer(buf);
+      view1.setDiffRanges([]);
+      document.getElementById("paneTitle1").textContent = "File 1: " + fileObj.name;
+    } else {
+      state.file2 = model;
+      view2.setBuffer(buf);
+      view2.setDiffRanges([]);
+      document.getElementById("paneTitle2").textContent = "File 2: " + fileObj.name;
+    }
+    renderFileMeta(slotNum);
+    resetDiffUI();
+    updateCompareButtonState();
+  }).catch(function (err) {
+    showToast("Failed to read file: " + err.message);
+  });
+}
+
+function renderFileMeta(slotNum) {
+  var model = slotNum === 1 ? state.file1 : state.file2;
+  var el = document.getElementById("meta" + slotNum);
+  var dz = document.getElementById("drop" + slotNum);
+  if (!model) { el.innerHTML = ""; dz.classList.remove("loaded"); return; }
+  dz.classList.add("loaded");
+  dz.textContent = model.file.name;
+  var bomWarn = model.bom !== "none" ? '<span class="warn">' + model.bom + "</span>" : "none";
+  el.innerHTML =
+    "Size: <b>" + model.buf.length.toLocaleString() + " bytes</b> (" + humanSize(model.buf.length) + ")<br>" +
+    "Modified: <b>" + new Date(model.file.lastModified).toLocaleString() + "</b><br>" +
+    "Encoding marker: " + bomWarn + (model.isXml ? " &middot; looks like XML" : "");
+}
+
+function resetDiffUI() {
+  state.diffBlocks = [];
+  state.activeDiffIndex = -1;
+  document.getElementById("diffCount").textContent = "0";
+  document.getElementById("diffList").innerHTML = '<div class="diff-empty">Load two files and click Compare.</div>';
+  document.getElementById("diffNotice").classList.remove("show");
+  document.getElementById("copyDiffBtn").disabled = true;
+  document.getElementById("exportCsvBtn").disabled = true;
+  document.getElementById("statusDiffs").style.display = "none";
+  view1.setDiffRanges([]);
+  view2.setDiffRanges([]);
+}
+
+function updateCompareButtonState() {
+  document.getElementById("compareBtn").disabled = !(state.file1 && state.file2);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Drag & drop / file input wiring                                        */
+/* ---------------------------------------------------------------------- */
+
+function wireDropzone(dzId, inputId, slotNum) {
+  var dz = document.getElementById(dzId);
+  var input = document.getElementById(inputId);
+  dz.addEventListener("click", function () { input.click(); });
+  input.addEventListener("change", function () {
+    if (input.files[0]) loadFile(input.files[0], slotNum);
+  });
+  dz.addEventListener("dragover", function (e) { e.preventDefault(); dz.classList.add("dragover"); });
+  dz.addEventListener("dragleave", function () { dz.classList.remove("dragover"); });
+  dz.addEventListener("drop", function (e) {
+    e.preventDefault();
+    dz.classList.remove("dragover");
+    if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0], slotNum);
+  });
+}
+wireDropzone("drop1", "fileInput1", 1);
+wireDropzone("drop2", "fileInput2", 2);
+
+/* ---------------------------------------------------------------------- */
+/* Mode toggle                                                            */
+/* ---------------------------------------------------------------------- */
+
+function setMode(mode) {
+  state.mode = mode;
+  var isCompare = mode === "compare";
+  document.getElementById("modeSingleBtn").classList.toggle("active", !isCompare);
+  document.getElementById("modeCompareBtn").classList.toggle("active", isCompare);
+  document.getElementById("slot2").style.display = isCompare ? "flex" : "none";
+  document.getElementById("compareBtn").style.display = isCompare ? "inline-block" : "none";
+  document.getElementById("pane2").style.display = isCompare ? "flex" : "none";
+  document.getElementById("diffPanel").style.display = isCompare ? "flex" : "none";
+  document.getElementById("layoutToggleBtn").style.display = isCompare ? "inline-block" : "none";
+  document.getElementById("statusDiffs").style.display = isCompare && state.diffBlocks.length ? "inline" : "none";
+  updateCompareButtonState();
+  requestAnimationFrame(function () { view1.render(); view2.render(); });
+}
+document.getElementById("modeSingleBtn").addEventListener("click", function () { setMode("single"); });
+document.getElementById("modeCompareBtn").addEventListener("click", function () { setMode("compare"); });
+
+document.getElementById("layoutToggleBtn").addEventListener("click", function () {
+  document.getElementById("hexPanes").classList.toggle("stacked");
+  view1.render(); view2.render();
+});
+
+/* ---------------------------------------------------------------------- */
+/* Diff worker                                                            */
+/* ---------------------------------------------------------------------- */
+
+var workerSrc = document.getElementById("diffWorkerSrc").textContent;
+var workerUrl = URL.createObjectURL(new Blob([workerSrc], { type: "application/javascript" }));
+
+document.getElementById("compareBtn").addEventListener("click", function () {
+  if (!state.file1 || !state.file2) return;
+  var btn = document.getElementById("compareBtn");
+  btn.disabled = true;
+  btn.textContent = "Comparing...";
+  var worker = new Worker(workerUrl);
+  var buf1Copy = state.file1.buf.slice().buffer;
+  var buf2Copy = state.file2.buf.slice().buffer;
+  worker.onmessage = function (e) {
+    var msg = e.data;
+    if (msg.kind === "progress") return;
+    if (msg.kind === "done") {
+      state.diffBlocks = msg.blocks;
+      onDiffComplete();
+      btn.disabled = false;
+      btn.textContent = "Compare";
+      worker.terminate();
+    }
+  };
+  worker.onerror = function (err) {
+    showToast("Diff failed: " + err.message);
+    btn.disabled = false;
+    btn.textContent = "Compare";
+    worker.terminate();
+  };
+  worker.postMessage({ kind: "diff", buf1: buf1Copy, buf2: buf2Copy }, [buf1Copy, buf2Copy]);
+});
+
+function onDiffComplete() {
+  var blocks = state.diffBlocks;
+  var ranges1 = blocks.map(function (b) { return { start: b.start1, end: b.end1, type: b.type, index: b.index }; });
+  var ranges2 = blocks.map(function (b) { return { start: b.start2, end: b.end2, type: b.type, index: b.index }; });
+  view1.setDiffRanges(ranges1);
+  view2.setDiffRanges(ranges2);
+
+  document.getElementById("diffCount").textContent = blocks.length;
+  document.getElementById("statusDiffs").style.display = "inline";
+  document.getElementById("statusDiffs").innerHTML = "Diffs: <b>" + blocks.length + "</b>";
+  document.getElementById("copyDiffBtn").disabled = blocks.length === 0;
+  document.getElementById("exportCsvBtn").disabled = blocks.length === 0;
+
+  var notice = document.getElementById("diffNotice");
+  if (state.file1.bom !== state.file2.bom) {
+    notice.textContent = "Encoding marker mismatch: File 1 = " + state.file1.bom + ", File 2 = " + state.file2.bom;
+    notice.classList.add("show");
+  } else {
+    notice.classList.remove("show");
+  }
+
+  renderDiffList(blocks);
+}
+
+var DIFF_LIST_CAP = 2000;
+
+function renderDiffList(blocks) {
+  var container = document.getElementById("diffList");
+  if (blocks.length === 0) {
+    container.innerHTML = '<div class="diff-empty">No differences found. Files are byte-identical.</div>';
+    return;
+  }
+  var xmlAware = state.file1.isXml || state.file2.isXml;
+  var shown = blocks.slice(0, DIFF_LIST_CAP);
+  var html = shown.map(function (b) {
+    var ctx = "";
+    if (xmlAware) {
+      var tag = xmlContextNear(state.file1.buf, b.start1);
+      if (tag) ctx = 'near &lt;' + escapeHtml(tag) + '&gt;';
+    }
+    return (
+      '<div class="diff-row" data-index="' + b.index + '">' +
+      '<span class="badge ' + b.type + '">' + b.type.slice(0, 3) + "</span>" +
+      "<span>F1 " + formatOffset(b.start1) + " len " + b.len1 + "</span>" +
+      "<span>F2 " + formatOffset(b.start2) + " len " + b.len2 + "</span>" +
+      "<span>#" + b.index + "</span>" +
+      (ctx ? '<span class="ctx">' + ctx + "</span>" : "") +
+      "</div>"
+    );
+  }).join("");
+  if (blocks.length > DIFF_LIST_CAP) {
+    html += '<div class="diff-empty">' + (blocks.length - DIFF_LIST_CAP) + " more diffs not shown — use Export CSV for the full list.</div>";
+  }
+  container.innerHTML = html;
+  container.querySelectorAll(".diff-row").forEach(function (row) {
+    row.addEventListener("click", function () {
+      var idx = parseInt(row.getAttribute("data-index"), 10);
+      selectDiffBlock(idx);
+    });
+  });
+}
+
+function selectDiffBlock(index) {
+  var block = state.diffBlocks.find(function (b) { return b.index === index; });
+  if (!block) return;
+  state.activeDiffIndex = index;
+  view1.setActiveDiff(index);
+  view2.setActiveDiff(index);
+  view1.scrollToOffset(block.start1);
+  view2.scrollToOffset(block.start2);
+  document.querySelectorAll(".diff-row").forEach(function (r) {
+    r.classList.toggle("active", parseInt(r.getAttribute("data-index"), 10) === index);
+  });
+}
+
+/* ---------------------------------------------------------------------- */
+/* Goto offset                                                            */
+/* ---------------------------------------------------------------------- */
+
+document.getElementById("gotoBtn").addEventListener("click", doGoto);
+document.getElementById("gotoInput").addEventListener("keydown", function (e) {
+  if (e.key === "Enter") doGoto();
+});
+function doGoto() {
+  var raw = document.getElementById("gotoInput").value;
+  var offset = parseOffsetInput(raw);
+  if (offset === null) { showToast("Enter an offset like 0x1A or 42"); return; }
+  if (state.file1 && offset < state.file1.buf.length) { view1.scrollToOffset(offset); view1.selectByte(offset); updateStatusBar(1, offset); }
+  if (state.mode === "compare" && state.file2 && offset < state.file2.buf.length) { view2.scrollToOffset(offset); view2.selectByte(offset); }
+}
+
+/* ---------------------------------------------------------------------- */
+/* Export / copy                                                          */
+/* ---------------------------------------------------------------------- */
+
+function showToast(msg) {
+  var t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  setTimeout(function () { t.classList.remove("show"); }, 2200);
+}
+
+document.getElementById("copyDiffBtn").addEventListener("click", function () {
+  var lines = [
+    "| # | Type | File1 Range | File2 Range | Len1 | Len2 | Preview1 | Preview2 |",
+    "|---|------|-------------|-------------|------|------|----------|----------|"
+  ];
+  state.diffBlocks.forEach(function (b) {
+    lines.push(
+      "| " + b.index + " | " + b.type + " | " + formatOffset(b.start1) + "-" + formatOffset(b.end1) +
+      " | " + formatOffset(b.start2) + "-" + formatOffset(b.end2) + " | " + b.len1 + " | " + b.len2 +
+      " | `" + b.ascii1.replace(/\|/g, "\\|") + (b.truncated ? "..." : "") + "` | `" + b.ascii2.replace(/\|/g, "\\|") + (b.truncated ? "..." : "") + "` |"
+    );
+  });
+  var text = lines.join("\n");
+  navigator.clipboard.writeText(text).then(function () {
+    showToast("Copied " + state.diffBlocks.length + " diff block(s) to clipboard");
+  }).catch(function () {
+    showToast("Clipboard copy failed — select and copy manually");
+  });
+});
+
+document.getElementById("exportCsvBtn").addEventListener("click", function () {
+  var rows = [["#", "Type", "File1 Start", "File1 End", "File1 Length", "File2 Start", "File2 End", "File2 Length", "Preview1", "Preview2", "XML Context"]];
+  var xmlAware = state.file1.isXml || state.file2.isXml;
+  state.diffBlocks.forEach(function (b) {
+    var ctx = xmlAware ? (xmlContextNear(state.file1.buf, b.start1) || "") : "";
+    rows.push([
+      b.index, b.type, formatOffset(b.start1), formatOffset(b.end1), b.len1,
+      formatOffset(b.start2), formatOffset(b.end2), b.len2,
+      b.ascii1 + (b.truncated ? "..." : ""), b.ascii2 + (b.truncated ? "..." : ""), ctx
+    ]);
+  });
+  var csv = rows.map(function (r) { return r.map(escapeCsv).join(","); }).join("\r\n");
+  var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "hex-diff-report.csv";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  showToast("Exported " + state.diffBlocks.length + " diff block(s) as CSV");
+});
+</script>
+</body>
+</html>
